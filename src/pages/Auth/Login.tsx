@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { SyntheticEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BrandLogo from '../../components/BrandLogo'
+import api from '../../services/api'
 
 const RESEND_SECONDS = 30
 
@@ -43,15 +44,26 @@ export default function Login() {
 		return () => window.clearInterval(timer)
 	}, [secondsLeft])
 
-	const sendOtp = () => {
+	const sendOtp = async () => {
 		if (!isPhoneValid) {
 			setMessage('Enter a valid 10-digit phone number.')
 			return
 		}
 
-		setOtpSent(true)
-		setSecondsLeft(RESEND_SECONDS)
-		setMessage(`OTP sent to +91 ${formatPhone(phoneDigits)}`)
+		setSubmitting(true)
+		setMessage('Sending OTP...')
+
+		try {
+			await api.post('/auth/send-otp', { phoneNumber: phoneDigits })
+			setOtpSent(true)
+			setSecondsLeft(RESEND_SECONDS)
+			setMessage(`OTP sent to +91 ${formatPhone(phoneDigits)}`)
+		} catch (err: any) {
+			console.error('Failed to send OTP:', err)
+			setMessage(err.response?.data?.message || 'Failed to send OTP. Please try again.')
+		} finally {
+			setSubmitting(false)
+		}
 	}
 
 	const handleSendOtpSubmit = (event: SyntheticEvent<HTMLFormElement>) => {
@@ -75,11 +87,33 @@ export default function Login() {
 		setSubmitting(true)
 		setMessage('Verifying OTP...')
 
-		await new Promise((resolve) => setTimeout(resolve, 900))
+		try {
+			const response = await api.post('/auth/verify-otp', {
+				phoneNumber: phoneDigits,
+				otp: otpDigits
+			})
 
-		setSubmitting(false)
-		setMessage('Login successful. Welcome back.')
-		navigate('/overview', { replace: true })
+			const { token, user } = response.data
+
+			if (user.role !== 'admin') {
+				setMessage('Access denied. Admin role required.')
+				setSubmitting(false)
+				return
+			}
+
+			// Store real token and role for authentication
+			localStorage.setItem('token', token)
+			localStorage.setItem('user', JSON.stringify(user))
+			localStorage.setItem('role', user.role)
+
+			setMessage('Login successful. Welcome back.')
+			navigate('/overview', { replace: true })
+		} catch (err: any) {
+			console.error('Verification failed:', err)
+			setMessage(err.response?.data?.message || 'Verification failed. Please check your OTP.')
+		} finally {
+			setSubmitting(false)
+		}
 	}
 
 	return (
